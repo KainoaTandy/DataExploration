@@ -1,0 +1,92 @@
+---
+title: "DataExploration"
+format: html
+editor: visual
+---
+
+# Libraries Used:
+
+```{r}
+library(rio)
+library(lubridate)
+library(dplyr)
+library(stringr)
+library(fixest)
+library(tidyverse)
+```
+
+```{r}
+labfiles = "Lab3_Rawdata"
+df = list.files(path = labfiles, pattern = "trends_up_to_", full.names = TRUE)
+data = import_list(df, rbind = TRUE)
+data = data %>%
+  mutate(date_string = str_sub(monthorweek, 1, 10))
+data = data %>%
+  mutate(date = ymd(date_string))
+data = data %>%
+  mutate(month = floor_date(date, "month"))
+data = data %>% 
+  group_by(schname, keyword) %>%
+  mutate(std_index = scale(index), na.rm =TRUE)
+
+```
+
+```{r}
+id_name_link = import(file = "Lab3_Rawdata/id_name_link.csv")
+scorecard = import(file = "Lab3_Rawdata/Most+Recent+Cohorts+(Scorecard+Elements).csv")
+
+id_name_link = id_name_link %>%
+  group_by(schname) %>%
+  mutate(n = n()) %>%
+  filter (n ==1)
+
+trends_id = inner_join(data, id_name_link, by = NULL, copy = TRUE)
+trends_id_scorecard = inner_join(trends_id, scorecard, by = c("unitid" = "UNITID"))
+#Data cleaning complete
+```
+
+### **Data Cleaning Complete**
+
+```{r}
+trends_id_scorecard = trends_id_scorecard %>%
+  filter(PREDDEG == 3) %>%
+  mutate(reported_earnings = as.numeric(`md_earn_wne_p10-REPORTED-EARNINGS`)) %>%
+  drop_na(reported_earnings)
+```
+
+```{r}
+avg_earnings = mean(trends_id_scorecard$reported_earnings)
+sd_earnings = sd(trends_id_scorecard$reported_earnings)
+
+trends_id_scorecard = trends_id_scorecard %>%
+  mutate(low_earnings = `reported_earnings` <= avg_earnings - 2*sd_earnings) %>%
+  mutate(high_earnings = `reported_earnings` >= avg_earnings + 2*sd_earnings) %>%
+  mutate(earnings = case_when(low_earnings == TRUE ~ "Low Earnings", high_earnings == TRUE ~ "High Earnings", TRUE ~ "Average Earnings"))
+```
+
+```{r}
+trends_id_scorecard = trends_id_scorecard %>%
+  mutate(pre_release = date < '2015-09-01') %>%
+  mutate(post_release = date >= '2015-09-01') %>%
+  mutate(release = case_when(pre_release == TRUE ~ "Pre-Release", post_release == TRUE ~ "Post-Release"))
+```
+
+```{r}
+m = feols(std_index~high_earnings+post_release +high_earnings*post_release, data=trends_id_scorecard, vcov = 'hetero')
+etable(m)
+
+trends_id_scorecard <- trends_id_scorecard %>%
+  filter(earnings != "Average Earnings")
+ggplot(trends_id_scorecard) + aes(x = release, y = std_index, group = earnings, color = earnings) + geom_point(size = 2) + geom_line(linewidth = 2) + scale_x_discrete(limit = c("Pre-Release", "Post-Release")) + scale_y_continuous(limits = c(-1.2, 2)) + labs(title = "Effect on Scorecard release on Standard Search Index for High & Low Earnings Colleges", x = ("Scorecard Release"), y =("Standard Search Index"))
+
+```
+
+# **Writeup:**
+
+Looking into the original research question of how did the release of the scorecard (start of September 2015) shift the student interest in high earning colleges relative to low earnings colleges (that predominantly grant bachelor's degrees). I first elected to clean my data further by removing from the data set colleges that didn't predominately grant bachelor's degrees. I did this by looking further into the data dictionary for the college scorecard (what the values mean) and found the column PREDDEG which showed the primary degree offered from the university. I used this to filter out colleges that didn't have a PREDDEG of 3 (didn't predominately grant bachelors degrees). I then looked at the search index for all the colleges and standardized them in order to get a change by one unit to the standardized index being a one standard deviation change in search interest (before they were only comparable to themselves). I did this by using the scale() function instead of the recommended way of calculating it with mean() and sd() just as I found it easier and cleaner.
+
+I then determined low and high earnings by looking at the reported earnings and removing the non numeric values (Privacy protected fields). I then found the mean of all the reported earnings and the standard deviation and then determined high earnings to be 2 standard deviations greater than the mean and low earnings to be 2 standard deviations less than the mean. I argue this is a good measure of high and low earnings as given a normal distribution we can expect to find that 95% of the population will fall in the average earnings category and then the top 2.5% and bottom 2.5% will be our population that lies in the high earnings and low earnings category. While I think one standard deviation was probably sufficent I think having more distinct groups will allow me to more easily see the effects of high and low earnings (cut through the noise). I was able to do this by setting columns that told me if the college was TRUE or FALSE for high and low earnings and then created a new column by using the case_when() to display the proper earnings for each college.
+
+For my regression I regressed the standardized index on high earnings and found in the analysis the introduction of the college scorecard increased the search index on high earning colleges by 5.24% of a standard deviation with a standard deviation of 0.00384. Overall, from this I found that the search index for both high earning colleges and low earning colleges fell slightly to their pre scorecard release.
+
+In conclusion the introduction of the college scorecard increased search activity on Google Trends for colleges with high earnings graduates by 5.24% of a standard deviation relative to what it did for colleges with low earning graduates with a standard error of 0.0384. This shift suggests there was a small impact of the scorecard on increased search activity towards colleges with high earning graduates. Looking at my graph for the standardized index on scorecard release I found that both high earning colleges and low earning colleges decreased in overall search interest however, high earning colleges fell by a lower rate.
